@@ -11,15 +11,26 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 import yfinance as yf
+from curl_cffi import requests as cffi_requests
 
 logger = logging.getLogger(__name__)
 
-# Yahoo Finance returns HTTP 429 ("Too Many Requests. Rate limited.") under
-# bursty traffic — common on shared cloud-host IPs (Render, Railway, AWS, ...)
-# where many unrelated apps share the same outbound address. It's transient
-# (a request that fails can succeed seconds later from the same IP), so a
-# short, bounded retry recovers most of these without risking a retry storm
-# that would make the limiting worse.
+# Yahoo Finance's bot-detection fingerprints the TLS handshake, not just
+# request rate — Python's default `requests`/`urllib3` stack has a recognisable
+# signature that gets flagged (especially from shared/datacenter IPs on hosts
+# like Render, Railway, AWS, ...), producing persistent "Too Many Requests"
+# errors regardless of how few requests are actually sent. Routing all calls
+# through a curl_cffi session that impersonates a real Chrome browser's TLS
+# fingerprint is the documented fix and lets the exact same code run reliably
+# both locally and on cloud hosts. One session is reused for the process
+# lifetime (matches yfinance's own internal session-reuse pattern).
+_yf_session = cffi_requests.Session(impersonate="chrome")
+
+# Yahoo Finance can still return HTTP 429 ("Too Many Requests. Rate limited.")
+# under genuinely bursty traffic even with a browser-like fingerprint. It's
+# transient (a request that fails can succeed seconds later), so a short,
+# bounded retry recovers these without risking a retry storm that would make
+# the limiting worse.
 _RATE_LIMIT_RETRY_ATTEMPTS = 3
 _RATE_LIMIT_RETRY_BASE_DELAY_SECONDS = 1.5
 
@@ -78,7 +89,7 @@ def _get_live_fx_rate(from_currency: str, to_currency: str) -> Optional[float]:
 
     rate: Optional[float] = None
     try:
-        fx_ticker = yf.Ticker(pair)
+        fx_ticker = yf.Ticker(pair, session=_yf_session)
         fx_info = fx_ticker.info or {}
         rate = fx_info.get("regularMarketPrice") or fx_info.get("currentPrice")
         if rate is None:
@@ -100,7 +111,7 @@ def fetch_stock_fundamentals(symbol: str) -> Dict[str, Any]:
     """
     logger.info(f"Fetching fundamentals for symbol: {symbol}")
     symbol_upper = symbol.strip().upper()
-    ticker = yf.Ticker(symbol_upper)
+    ticker = yf.Ticker(symbol_upper, session=_yf_session)
     
     try:
         # Under sustained rate-limiting yfinance can return None here instead
@@ -231,7 +242,7 @@ def fetch_historical_prices(symbol: str, period: str = "1y") -> List[Dict[str, A
     Returns list of dicts with iso formatted dates.
     """
     logger.info(f"Fetching historical prices for {symbol} with period {period}")
-    ticker = yf.Ticker(symbol.strip().upper())
+    ticker = yf.Ticker(symbol.strip().upper(), session=_yf_session)
     
     try:
         hist = _yf_call(lambda: ticker.history(period=period), f"{symbol} historical prices")
@@ -264,7 +275,7 @@ def fetch_quarterly_results(symbol: str) -> List[Dict[str, Any]]:
     Sorted from newest to oldest.
     """
     logger.info(f"Fetching quarterly results for {symbol}")
-    ticker = yf.Ticker(symbol.strip().upper())
+    ticker = yf.Ticker(symbol.strip().upper(), session=_yf_session)
     
     try:
         quarterly_financials = _yf_call(lambda: ticker.quarterly_financials, f"{symbol} quarterly financials")

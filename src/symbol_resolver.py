@@ -13,13 +13,21 @@ import time
 from typing import Dict, Optional
 
 import yfinance as yf
+from curl_cffi import requests as cffi_requests
 
 logger = logging.getLogger(__name__)
 
-# Yahoo Finance returns HTTP 429 ("Too Many Requests. Rate limited.") under
-# bursty traffic — common on shared cloud-host IPs. It's transient, so a short
-# bounded retry recovers most of these rather than wrongly telling a user
-# "company not found" when Yahoo was simply rate-limiting us at that instant.
+# See data_fetcher._yf_session — Yahoo's bot-detection fingerprints the TLS
+# handshake of the underlying HTTP client, not just request rate. A curl_cffi
+# session impersonating a real Chrome browser avoids the persistent
+# "Too Many Requests" blocks that Python's default requests/urllib3 stack
+# triggers from shared/datacenter IPs (Render, Railway, AWS, ...).
+_yf_session = cffi_requests.Session(impersonate="chrome")
+
+# Yahoo Finance can still return HTTP 429 ("Too Many Requests. Rate limited.")
+# under genuinely bursty traffic. It's transient, so a short bounded retry
+# recovers most of these rather than wrongly telling a user "company not
+# found" when Yahoo was simply rate-limiting us at that instant.
 _RATE_LIMIT_RETRY_ATTEMPTS = 3
 _RATE_LIMIT_RETRY_BASE_DELAY_SECONDS = 1.5
 
@@ -148,7 +156,7 @@ def _is_resolvable(symbol: str) -> bool:
     would otherwise look "valid" while serving no real company data.
     """
     try:
-        info = _yf_call(lambda: yf.Ticker(symbol).info, f"{symbol} resolvability check") or {}
+        info = _yf_call(lambda: yf.Ticker(symbol, session=_yf_session).info, f"{symbol} resolvability check") or {}
     except Exception:
         return False
     has_identity = bool(info.get("longName") or info.get("shortName"))
@@ -165,7 +173,7 @@ def _search_live(query: str) -> Optional[str]:
     never an unverified guess.
     """
     try:
-        results = _yf_call(lambda: yf.Search(query, max_results=15).quotes, f"live search '{query}'")
+        results = _yf_call(lambda: yf.Search(query, max_results=15, session=_yf_session).quotes, f"live search '{query}'")
     except Exception as e:
         logger.warning(f"Live symbol search failed for '{query}': {e}")
         return None
