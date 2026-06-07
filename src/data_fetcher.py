@@ -103,7 +103,9 @@ def fetch_stock_fundamentals(symbol: str) -> Dict[str, Any]:
     ticker = yf.Ticker(symbol_upper)
     
     try:
-        info = _yf_call(lambda: ticker.info, f"{symbol_upper} fundamentals")
+        # Under sustained rate-limiting yfinance can return None here instead
+        # of raising — guard with `or {}` so `info` is always a dict.
+        info = _yf_call(lambda: ticker.info, f"{symbol_upper} fundamentals") or {}
     except Exception as e:
         logger.error(f"Error fetching info for {symbol_upper} from yfinance: {e}")
         info = {}
