@@ -9,11 +9,43 @@ different company's data.
 """
 
 import logging
+import time
 from typing import Dict, Optional
 
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+# Yahoo Finance returns HTTP 429 ("Too Many Requests. Rate limited.") under
+# bursty traffic — common on shared cloud-host IPs. It's transient, so a short
+# bounded retry recovers most of these rather than wrongly telling a user
+# "company not found" when Yahoo was simply rate-limiting us at that instant.
+_RATE_LIMIT_RETRY_ATTEMPTS = 3
+_RATE_LIMIT_RETRY_BASE_DELAY_SECONDS = 1.5
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    text = str(exc)
+    return "Too Many Requests" in text or "rate limit" in text.lower()
+
+
+def _yf_call(fn, description: str):
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, _RATE_LIMIT_RETRY_ATTEMPTS + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            if attempt < _RATE_LIMIT_RETRY_ATTEMPTS and _is_rate_limit_error(e):
+                delay = _RATE_LIMIT_RETRY_BASE_DELAY_SECONDS * attempt
+                logger.warning(
+                    f"Yahoo Finance rate-limited '{description}' "
+                    f"(attempt {attempt}/{_RATE_LIMIT_RETRY_ATTEMPTS}); retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+                continue
+            raise
+    raise last_exc  # unreachable — loop above always returns or raises
 
 # Curated aliases for short names/abbreviations that Yahoo Finance's own live
 # search (`yf.Search`) demonstrably resolves wrong or not at all — verified by
@@ -116,7 +148,7 @@ def _is_resolvable(symbol: str) -> bool:
     would otherwise look "valid" while serving no real company data.
     """
     try:
-        info = yf.Ticker(symbol).info or {}
+        info = _yf_call(lambda: yf.Ticker(symbol).info, f"{symbol} resolvability check") or {}
     except Exception:
         return False
     has_identity = bool(info.get("longName") or info.get("shortName"))
@@ -133,7 +165,7 @@ def _search_live(query: str) -> Optional[str]:
     never an unverified guess.
     """
     try:
-        results = yf.Search(query, max_results=15).quotes
+        results = _yf_call(lambda: yf.Search(query, max_results=15).quotes, f"live search '{query}'")
     except Exception as e:
         logger.warning(f"Live symbol search failed for '{query}': {e}")
         return None

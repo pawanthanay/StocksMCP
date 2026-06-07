@@ -14,6 +14,45 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
+# Yahoo Finance returns HTTP 429 ("Too Many Requests. Rate limited.") under
+# bursty traffic — common on shared cloud-host IPs (Render, Railway, AWS, ...)
+# where many unrelated apps share the same outbound address. It's transient
+# (a request that fails can succeed seconds later from the same IP), so a
+# short, bounded retry recovers most of these without risking a retry storm
+# that would make the limiting worse.
+_RATE_LIMIT_RETRY_ATTEMPTS = 3
+_RATE_LIMIT_RETRY_BASE_DELAY_SECONDS = 1.5
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    text = str(exc)
+    return "Too Many Requests" in text or "rate limit" in text.lower()
+
+
+def _yf_call(fn, description: str):
+    """
+    Runs a single yfinance network call, retrying with backoff ONLY on
+    rate-limit errors — genuine data errors (bad symbol, network failure,
+    etc.) surface immediately rather than being masked by retries.
+    """
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, _RATE_LIMIT_RETRY_ATTEMPTS + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            if attempt < _RATE_LIMIT_RETRY_ATTEMPTS and _is_rate_limit_error(e):
+                delay = _RATE_LIMIT_RETRY_BASE_DELAY_SECONDS * attempt
+                logger.warning(
+                    f"Yahoo Finance rate-limited '{description}' "
+                    f"(attempt {attempt}/{_RATE_LIMIT_RETRY_ATTEMPTS}); retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+                continue
+            raise
+    raise last_exc  # unreachable — loop above always returns or raises
+
+
 # Short-lived cache of live FX rates (key -> (rate, fetched_at_epoch_seconds)).
 # A long-running server must keep re-pulling rates periodically — FX moves daily —
 # so entries are refreshed once they exceed _FX_RATE_TTL_SECONDS rather than being
@@ -64,7 +103,7 @@ def fetch_stock_fundamentals(symbol: str) -> Dict[str, Any]:
     ticker = yf.Ticker(symbol_upper)
     
     try:
-        info = ticker.info
+        info = _yf_call(lambda: ticker.info, f"{symbol_upper} fundamentals")
     except Exception as e:
         logger.error(f"Error fetching info for {symbol_upper} from yfinance: {e}")
         info = {}
@@ -147,7 +186,7 @@ def fetch_stock_fundamentals(symbol: str) -> Dict[str, Any]:
     institutional_holding = None
     institutional_holders_count = None
     try:
-        major_holders = ticker.major_holders
+        major_holders = _yf_call(lambda: ticker.major_holders, f"{symbol_upper} major holders")
         if major_holders is not None and not major_holders.empty and "Value" in major_holders.columns:
             breakdown = major_holders["Value"].to_dict()
             insiders_pct = breakdown.get("insidersPercentHeld")
@@ -193,7 +232,7 @@ def fetch_historical_prices(symbol: str, period: str = "1y") -> List[Dict[str, A
     ticker = yf.Ticker(symbol.strip().upper())
     
     try:
-        hist = ticker.history(period=period)
+        hist = _yf_call(lambda: ticker.history(period=period), f"{symbol} historical prices")
     except Exception as e:
         logger.error(f"Error fetching history for {symbol} from yfinance: {e}")
         return []
@@ -226,7 +265,7 @@ def fetch_quarterly_results(symbol: str) -> List[Dict[str, Any]]:
     ticker = yf.Ticker(symbol.strip().upper())
     
     try:
-        quarterly_financials = ticker.quarterly_financials
+        quarterly_financials = _yf_call(lambda: ticker.quarterly_financials, f"{symbol} quarterly financials")
     except Exception as e:
         logger.error(f"Error fetching quarterly financials for {symbol}: {e}")
         return []
