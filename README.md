@@ -115,6 +115,30 @@ python3 -m src.server
 
 ---
 
+## ☁️ Deploying the Web Dashboard (Render)
+
+The web dashboard is a standard FastAPI app and can be deployed for free on
+[Render](https://render.com):
+
+1. Fork or push this repo to your own GitHub account.
+2. On Render, choose **New + → Blueprint** and point it at your repo — it will
+   pick up [`render.yaml`](render.yaml) automatically and configure the build
+   (`pip install -r requirements.txt`) and start
+   (`uvicorn src.web_dashboard:app --host 0.0.0.0 --port $PORT`) commands.
+3. Click **Apply** / **Create Web Service**. Render builds and deploys
+   automatically, and redeploys on every push to `main`.
+4. Once live, share the `https://<your-service>.onrender.com` URL — every
+   visitor gets the same live Yahoo Finance data, fetched fresh per request.
+
+No server-side secrets are required: each visitor supplies their own optional
+Gemini API key directly in the dashboard UI (used only for that request, never
+stored server-side — see [`gemini_client.py`](src/gemini_client.py)).
+
+> Note: Render's free tier spins the service down after periods of inactivity,
+> so the first request after idling can take ~30–60 seconds to wake up.
+
+---
+
 ## 📊 Growth Scoring System
 
 Ratios are checked and scored out of 10 points:

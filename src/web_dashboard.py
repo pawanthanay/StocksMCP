@@ -201,9 +201,11 @@ async def delete_report_endpoint(symbol: str):
 
 if __name__ == "__main__":
     import uvicorn
-    # Read port from env or default to 8000
     import os
-    port = int(os.environ.get("WEB_DASHBOARD_PORT", 8000))
+    # Hosting platforms like Render/Railway/Heroku inject PORT and require the
+    # app to bind to it; WEB_DASHBOARD_PORT remains the override for local dev.
+    port = int(os.environ.get("PORT") or os.environ.get("WEB_DASHBOARD_PORT", 8000))
     host = os.environ.get("WEB_DASHBOARD_HOST", "0.0.0.0")
+    reload_enabled = os.environ.get("WEB_DASHBOARD_RELOAD", "true").lower() == "true"
     logger.info(f"Starting Web Dashboard server at http://{host}:{port}")
-    uvicorn.run("src.web_dashboard:app", host=host, port=port, reload=True)
+    uvicorn.run("src.web_dashboard:app", host=host, port=port, reload=reload_enabled)
