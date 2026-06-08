@@ -1129,7 +1129,7 @@
             <div class="chart-card">
                 <div class="card-header-with-action">
                     <label>Interactive Daily Candlestick Chart</label>
-                    <span id="chart-range" style="font-size: 0.8rem; color: var(--text-secondary);">1 Year History</span>
+                    <span id="chart-range" style="font-size: 0.8rem; color: var(--text-secondary);">1Y Daily · drag to zoom</span>
                 </div>
                 <div class="chart-container" id="candlestick-chart"></div>
             </div>
@@ -1519,7 +1519,12 @@
             const closes = candles.map(c => c.close);
             const volumes = candles.map(c => c.volume);
             
-            // Candlestick trace
+            // Candlestick trace — soft, balanced glass-style fills with crisp
+            // colored borders (rather than blocky solid bodies) read as far
+            // more polished on a dark theme, and an identical fill opacity for
+            // both up/down candles keeps the chart visually balanced (pure
+            // solid red vs. solid green at equal opacity reads "heavier" on
+            // one side than the other against a dark background).
             const traceCandle = {
                 x: dates,
                 close: closes,
@@ -1530,10 +1535,11 @@
                 xaxis: 'x',
                 yaxis: 'y',
                 name: 'Price',
-                increasing: { line: { color: '#10b981' } },
-                decreasing: { line: { color: '#ef4444' } }
+                whiskerwidth: 0.55,
+                increasing: { line: { color: '#34d399', width: 1.4 }, fillcolor: 'rgba(52, 211, 153, 0.38)' },
+                decreasing: { line: { color: '#fb7185', width: 1.4 }, fillcolor: 'rgba(251, 113, 133, 0.38)' }
             };
-            
+
             // Volume trace
             const traceVolume = {
                 x: dates,
@@ -1544,26 +1550,59 @@
                 name: 'Volume',
                 marker: {
                     color: candles.map((c, i) => {
-                        if (i === 0) return 'rgba(59, 130, 246, 0.4)';
-                        return c.close >= candles[i-1].close ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)';
+                        if (i === 0) return 'rgba(96, 165, 250, 0.35)';
+                        return c.close >= candles[i-1].close ? 'rgba(52, 211, 153, 0.28)' : 'rgba(251, 113, 133, 0.28)';
                     })
                 }
             };
-            
+
             const layout = {
                 dragmode: 'zoom',
-                margin: { r: 12, t: 8, b: 36, l: 56 },
+                margin: { r: 12, t: 44, b: 36, l: 56 },
                 showlegend: false,
                 hovermode: 'x unified',
+                // Unified hover box readable on the dark panel — Plotly's
+                // default light tooltip styling was nearly invisible here
+                // (dark muted text on a near-transparent dark background).
+                hoverlabel: {
+                    bgcolor: '#1a2235',
+                    bordercolor: '#263350',
+                    font: { family: 'JetBrains Mono, monospace', size: 11, color: '#f3f4f6' }
+                },
                 xaxis: {
                     autorange: true,
                     type: 'date',
                     gridcolor: 'rgba(148, 163, 184, 0.07)',
                     tickcolor: 'rgba(148, 163, 184, 0.2)',
                     linecolor: 'rgba(148, 163, 184, 0.15)',
-                    showspikes: false,
+                    showspikes: true,
+                    spikemode: 'across',
+                    spikedash: 'dot',
+                    spikethickness: 1,
+                    spikecolor: 'rgba(148, 163, 184, 0.5)',
                     font: { color: 'var(--text-secondary)', size: 11 },
-                    rangeslider: { visible: false }
+                    rangeslider: { visible: false },
+                    // Quick-zoom presets — a familiar "professional trading
+                    // platform" affordance that also fixes the real usability
+                    // problem of 250 daily candles being unreadably dense by
+                    // default; one click jumps to a legible recent window.
+                    rangeselector: {
+                        buttons: [
+                            { count: 1, label: '1M', step: 'month', stepmode: 'backward' },
+                            { count: 3, label: '3M', step: 'month', stepmode: 'backward' },
+                            { count: 6, label: '6M', step: 'month', stepmode: 'backward' },
+                            { step: 'all', label: '1Y' }
+                        ],
+                        x: 0,
+                        xanchor: 'left',
+                        y: 1.16,
+                        yanchor: 'top',
+                        bgcolor: 'rgba(255, 255, 255, 0.04)',
+                        activecolor: 'rgba(59, 130, 246, 0.35)',
+                        bordercolor: 'rgba(148, 163, 184, 0.18)',
+                        borderwidth: 1,
+                        font: { color: '#9ca3af', size: 11, family: 'Outfit, sans-serif' }
+                    }
                 },
                 yaxis: {
                     autorange: true,
@@ -1571,9 +1610,15 @@
                     gridcolor: 'rgba(148, 163, 184, 0.07)',
                     tickcolor: 'rgba(148, 163, 184, 0.2)',
                     linecolor: 'rgba(148, 163, 184, 0.15)',
+                    showspikes: true,
+                    spikemode: 'across',
+                    spikedash: 'dot',
+                    spikethickness: 1,
+                    spikecolor: 'rgba(148, 163, 184, 0.5)',
                     font: { color: 'var(--text-secondary)', size: 11 },
-                    title: { text: 'Price (₹)', font: { size: 11, color: 'var(--text-muted)' } },
-                    zeroline: false
+                    zeroline: false,
+                    tickprefix: '₹',
+                    separatethousands: true
                 },
                 yaxis2: {
                     domain: [0, 0.18],
@@ -1599,7 +1644,7 @@
                 displaylogo: false,
                 modeBarButtonsToRemove: ['select2d', 'lasso2d', 'toggleSpikelines', 'autoScale2d']
             };
-            
+
             Plotly.newPlot('candlestick-chart', [traceCandle, traceVolume], layout, config);
         }
 
