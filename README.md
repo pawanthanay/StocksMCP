@@ -2,6 +2,8 @@
 
 An AI-powered stock research platform built using the **Model Context Protocol (MCP)**. It implements a fully compliant FastMCP server exposing fundamental analysis, local file-based database CRUD tools, and a dynamic dashboard layout via the **Prefab UI** protocol, combined with a standalone **FastAPI + HTML5** interactive browser terminal.
 
+🌐 **Live Demo**: [stocksmcp-dashboard-sg.onrender.com](https://stocksmcp-dashboard-sg.onrender.com) — try it now, no install required (free-tier instance, may take ~30s to wake up on first load).
+
 ---
 
 ## 🏗️ Architecture
@@ -129,6 +131,12 @@ The web dashboard is a standard FastAPI app and can be deployed for free on
    automatically, and redeploys on every push to `main`.
 4. Once live, share the `https://<your-service>.onrender.com` URL — every
    visitor gets the same live Yahoo Finance data, fetched fresh per request.
+
+> **Note on region**: pick a region other than US-Oregon if you can — some
+> free-tier shared IP pools (e.g. Render's Oregon pool) are currently
+> IP-blocked by Yahoo Finance, which causes the live dashboard to return empty
+> data even though everything works locally. Singapore's pool is currently
+> unaffected — that's what powers the [live demo](https://stocksmcp-dashboard-sg.onrender.com) above.
 
 No server-side secrets are required: each visitor supplies their own optional
 Gemini API key directly in the dashboard UI (used only for that request, never
