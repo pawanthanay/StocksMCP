@@ -76,7 +76,7 @@ def calculate_growth_score(fundamentals: Dict[str, Any], quarterly_results: List
         elif de_val <= 1.0:
             de_points = 1
     else:
-        de_points = 2  # Assume low/no debt if not listed (common for IT/Alum)
+        de_points = 1  # neutral default when real D/E data is unavailable (matches roe_points/promo_points)
     score += de_points
     
     # 5. Promoter/Insider Stability (2 points)
@@ -147,7 +147,16 @@ def calculate_fair_price(fundamentals: Dict[str, Any], quarterly_results: List[D
     """
     cmp = fundamentals.get("current_price", 0.0)
     if cmp <= 0:
-        return {"fair_price": 0.0, "gap_percentage": 0.0, "is_undervalued": False, "valuation_method": "N/A"}
+        # No real current-price data to anchor any estimate to -- "fair price
+        # ₹0.00, overvalued by 0.0%" would be a fabricated reading, not an
+        # honest one. Say plainly that the model can't run.
+        return {
+            "fair_price": None,
+            "current_price": cmp,
+            "gap_percentage": None,
+            "is_undervalued": None,
+            "valuation_method": "N/A — no current price data available to anchor a fair-value estimate",
+        }
 
     pe = fundamentals.get("pe_ratio")
     pb = fundamentals.get("pb_ratio")
@@ -163,8 +172,21 @@ def calculate_fair_price(fundamentals: Dict[str, Any], quarterly_results: List[D
             shares = market_cap / cmp
             eps = net_profit / shares
         else:
-            eps = cmp * 0.05  # absolute fallback: assume a 5% earnings yield
-            pe = 20.0
+            # No real trailing PE and no usable (positive) net profit to derive
+            # EPS from -- typically a loss-making or pre-profit company.
+            # Inventing an EPS (eps = cmp * 0.05) here would mean fabricating
+            # the entire fair-value estimate on a made-up number; an honest
+            # "model not applicable" is far better than a confident-looking guess.
+            return {
+                "fair_price": None,
+                "current_price": cmp,
+                "gap_percentage": None,
+                "is_undervalued": None,
+                "valuation_method": (
+                    "N/A — no positive earnings (PE/net profit) data available to "
+                    "estimate fair value; common for loss-making or pre-profit companies"
+                ),
+            }
 
     # --- Smoothed growth rate: average QoQ revenue growth across every
     # available consecutive quarter pair, weighted toward the most recent
@@ -180,17 +202,21 @@ def calculate_fair_price(fundamentals: Dict[str, Any], quarterly_results: List[D
     if qoq_growth_rates:
         weights = list(range(len(qoq_growth_rates), 0, -1))  # most recent quarter weighted highest
         avg_growth_rate = sum(r * w for r, w in zip(qoq_growth_rates, weights)) / sum(weights)
+        annualized_growth_pct = ((1.0 + avg_growth_rate) ** 4 - 1.0) * 100.0
+        growth_phrase = f"~{annualized_growth_pct:.1f}% annualized growth"
+        # Faster growers earn a premium multiple, decliners a discount (bounded so a
+        # single blow-out or write-off quarter can't send the estimate to absurd extremes)
+        growth_multiplier = 1.0 + max(-0.20, min(0.60, avg_growth_rate * 2.0))
     else:
-        avg_growth_rate = 0.05  # neutral 5% default when no quarterly history exists
-    annualized_growth_pct = ((1.0 + avg_growth_rate) ** 4 - 1.0) * 100.0
+        # No quarter-over-quarter revenue history to derive a real trend from --
+        # apply a neutral multiplier (neither premium nor discount) instead of
+        # asserting a fabricated growth figure in the displayed methodology text.
+        growth_multiplier = 1.0
+        growth_phrase = "no quarterly revenue history available to gauge growth (neutral multiplier applied)"
 
     # --- Method 1: Growth & quality-adjusted relative PE ---
     sector = fundamentals.get("sector", "N/A")
     sector_average_pe = SECTOR_PE_BENCHMARKS.get(sector, 20.0)
-
-    # Faster growers earn a premium multiple, decliners a discount (bounded so a
-    # single blow-out or write-off quarter can't send the estimate to absurd extremes)
-    growth_multiplier = 1.0 + max(-0.20, min(0.60, avg_growth_rate * 2.0))
 
     # Quality premium/discount: ROE above/below the 15% "quality compounder" benchmark
     roe = fundamentals.get("roe")
@@ -214,15 +240,15 @@ def calculate_fair_price(fundamentals: Dict[str, Any], quarterly_results: List[D
         fair_price = (relative_fair_price * 0.6) + (graham_fair_price * 0.4)
         valuation_method = (
             f"Blended model: 60% growth/quality-adjusted PE (Fair PE {relative_fair_pe:.1f}x off a "
-            f"{sector_average_pe:.0f}x {sector} sector base, ~{annualized_growth_pct:.1f}% annualized growth) "
+            f"{sector_average_pe:.0f}x {sector} sector base, {growth_phrase}) "
             f"+ 40% Graham Number (√(22.5 × EPS × Book Value/Share))"
         )
     else:
         fair_price = relative_fair_price
         valuation_method = (
             f"Growth/quality-adjusted PE valuation: Fair PE of {relative_fair_pe:.1f}x applied to EPS "
-            f"({sector_average_pe:.0f}x {sector} sector base, adjusted for ~{annualized_growth_pct:.1f}% "
-            f"annualized growth and ROE-based quality)"
+            f"({sector_average_pe:.0f}x {sector} sector base, adjusted for {growth_phrase} "
+            f"and ROE-based quality)"
         )
 
     # Bound the estimate to a realistic band around CMP — genuine mispricings
@@ -400,8 +426,7 @@ def calculate_quarterly_metrics(quarterly_results: List[Dict[str, Any]], fundame
     """
     processed_quarters = []
     market_cap = fundamentals.get("market_cap", 0.0)
-    current_price = fundamentals.get("current_price", 0.0)
-    
+
     # Loop from oldest to newest to compute trailing/growth metrics, but return sorted by date desc
     # For simplification, we process them and calculate trailing PE
     for i, q in enumerate(quarterly_results):
@@ -456,15 +481,20 @@ def calculate_quarterly_metrics(quarterly_results: List[Dict[str, Any]], fundame
         raw_date = q.get("quarter", "")
         # convert e.g., '2025-12-31' to 'Q3 FY26' style or keep ISO. Let's keep ISO as key but display nicely
         
+        # net_sales/interest/ebitda/tax/pat are always real floats here (never
+        # None — fetch_quarterly_results normalizes unreported items to 0.0),
+        # and a loss-making quarter has a genuinely NEGATIVE pat/ebitda. A
+        # `> 0` guard would silently display that real loss as "₹0.00 Cr" —
+        # convert unconditionally so genuine negative figures show as such.
         processed_quarters.append({
             "quarter": raw_date,
-            "net_sales": round(sales / 1e7, 2) if sales > 0 else 0.0, # Convert to Crores (10 Million)
+            "net_sales": round(sales / 1e7, 2),  # Convert to Crores (10 Million)
             "ttm_gp": round(ttm_gp / 1e7, 2) if ttm_gp is not None else None,
             "gpm": round(gpm, 2) if gpm is not None else None,
-            "interest": round(interest / 1e7, 2) if interest > 0 else 0.0,
-            "ebitda": round(ebitda / 1e7, 2) if ebitda > 0 else 0.0,
-            "tax": round(tax / 1e7, 2) if tax > 0 else 0.0,
-            "pat": round(pat / 1e7, 2) if pat > 0 else 0.0,
+            "interest": round(interest / 1e7, 2),
+            "ebitda": round(ebitda / 1e7, 2),
+            "tax": round(tax / 1e7, 2),
+            "pat": round(pat / 1e7, 2),
             "npm": round(npm, 2),
             "market_cap": round(market_cap / 1e7, 2) if market_cap > 0 else 0.0,
             "ttm_pe": round(ttm_pe, 2) if ttm_pe else None,
@@ -482,9 +512,9 @@ def generate_ai_summary(fundamentals: Dict[str, Any], calculated_metrics: Dict[s
     growth_status = calculated_metrics.get("growth_status", "Neutral")
     score = calculated_metrics.get("growth_score", 5)
     fair_data = calculated_metrics.get("fair_price_data", {})
-    fair_price = fair_data.get("fair_price", 0.0)
-    gap_percentage = fair_data.get("gap_percentage", 0.0)
-    is_undervalued = fair_data.get("is_undervalued", False)
+    fair_price = fair_data.get("fair_price")
+    gap_percentage = fair_data.get("gap_percentage")
+    is_undervalued = fair_data.get("is_undervalued")
     pe = fundamentals.get("pe_ratio")
     
     # 1. Opening sentence
@@ -533,7 +563,12 @@ def generate_ai_summary(fundamentals: Dict[str, Any], calculated_metrics: Dict[s
             
     # 4. Valuation & Conclusion
     pe_str = f"{pe:.2f}x" if pe else "N/A"
-    if is_undervalued:
+    if fair_price is None or gap_percentage is None or is_undervalued is None:
+        # No usable earnings data to build a fair-value estimate from (typically
+        # loss-making companies) -- say so plainly instead of asserting a
+        # fabricated valuation gap and "undervalued/overvalued" verdict.
+        summary += f"Trading at a PE ratio of {pe_str}, the stock currently lacks sufficient earnings data to support a reliable fair-value estimate."
+    elif is_undervalued:
         summary += f"Trading at a PE ratio of {pe_str}, the stock appears undervalued by approximately {gap_percentage:.1f}% relative to its calculated growth-adjusted fair price of ₹{fair_price:,.2f}."
     else:
         summary += f"Trading at a PE ratio of {pe_str}, the stock appears overvalued by {abs(gap_percentage):.1f}% compared to its calculated fair price of ₹{fair_price:,.2f}."

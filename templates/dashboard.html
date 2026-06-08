@@ -1289,10 +1289,18 @@
             document.getElementById('cmp-val').textContent = formatCurrency(fundamentals.current_price);
             document.getElementById('fair-price-val').textContent = formatCurrency(fair.fair_price);
             
-            const gap = fair.gap_percentage || 0;
+            // gap_percentage is null when the valuation model genuinely doesn't
+            // apply (e.g. loss-making companies with no usable PE/profit data) —
+            // show that honestly as "N/A" rather than defaulting to a fabricated 0%.
+            const gap = (typeof fair.gap_percentage === 'number' && !isNaN(fair.gap_percentage)) ? fair.gap_percentage : null;
             const gapEl = document.getElementById('gap-val');
-            gapEl.textContent = (gap >= 0 ? '+' : '') + gap.toFixed(2) + '%';
-            gapEl.style.color = gap >= 0 ? 'var(--growth-color)' : 'var(--weak-color)';
+            if (gap === null) {
+                gapEl.textContent = 'N/A';
+                gapEl.style.color = '';
+            } else {
+                gapEl.textContent = (gap >= 0 ? '+' : '') + gap.toFixed(2) + '%';
+                gapEl.style.color = gap >= 0 ? 'var(--growth-color)' : 'var(--weak-color)';
+            }
             
             document.getElementById('pe-val').textContent = formatPE(fundamentals.pe_ratio);
             
@@ -1409,14 +1417,21 @@
             document.getElementById('fv-fair').textContent = formatCurrency(fair.fair_price);
             
             const valStatus = document.getElementById('fv-gap');
-            valStatus.textContent = (gap >= 0 ? '' : '') + gap.toFixed(2) + '% ' + (gap >= 0 ? 'Undervalued' : 'Overvalued');
-            valStatus.style.color = gap >= 0 ? 'var(--growth-color)' : 'var(--weak-color)';
-            
+            if (gap === null) {
+                valStatus.textContent = 'N/A — valuation model not applicable';
+                valStatus.style.color = '';
+            } else {
+                valStatus.textContent = gap.toFixed(2) + '% ' + (gap >= 0 ? 'Undervalued' : 'Overvalued');
+                valStatus.style.color = gap >= 0 ? 'var(--growth-color)' : 'var(--weak-color)';
+            }
+
             document.getElementById('fv-method').textContent = fair.valuation_method || '';
-            
+
             // Gauge position (map -50% to +50% undervalue range to 0% to 100% of progress bar)
-            // Left (overvalued) is 0%, Mid is 50%, Right (undervalued) is 100%
-            let pointerPercent = 50 + (gap * 1.5); // 1.5x multiplier for visual representation
+            // Left (overvalued) is 0%, Mid is 50%, Right (undervalued) is 100%.
+            // No estimate available -> park the pointer dead-centre rather than
+            // implying a (fabricated) 0% gap.
+            let pointerPercent = (gap === null) ? 50 : 50 + (gap * 1.5); // 1.5x multiplier for visual representation
             pointerPercent = Math.max(5, Math.min(95, pointerPercent));
             document.getElementById('fair-pointer').style.left = pointerPercent + '%';
             

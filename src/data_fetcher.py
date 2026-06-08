@@ -296,26 +296,38 @@ def fetch_quarterly_results(symbol: str) -> List[Dict[str, Any]]:
     # fetched, refuse to return mismatched-currency figures mislabeled as INR.
     fx_rate = 1.0
     try:
-        info = ticker.info or {}
-        financial_currency = info.get("financialCurrency")
-        trading_currency = info.get("currency")
-        if financial_currency and trading_currency and financial_currency != trading_currency:
-            live_rate = _get_live_fx_rate(financial_currency, trading_currency)
-            if live_rate is not None:
-                fx_rate = live_rate
-                logger.info(
-                    f"{symbol}: converting quarterly financials from "
-                    f"{financial_currency} to {trading_currency} at live rate {fx_rate:.4f}"
-                )
-            else:
-                logger.warning(
-                    f"{symbol}: financials are reported in {financial_currency} but the "
-                    f"stock trades in {trading_currency}, and no live FX rate could be "
-                    f"fetched — omitting quarterly figures rather than mislabeling them."
-                )
-                return []
+        # Must know whether financial-statement currency differs from trading
+        # currency BEFORE returning any figures — guessing "no mismatch" here
+        # would silently show e.g. Infosys's USD figures as INR at ~1/83rd
+        # their real value while still labelling them "Cr" (rupees-crore).
+        # That's a far worse outcome than omitting the section entirely, so a
+        # failed lookup must refuse to return data, not assume fx_rate = 1.0.
+        info = _yf_call(lambda: ticker.info, f"{symbol} quarterly-financials currency check") or {}
     except Exception as e:
-        logger.warning(f"Could not resolve financial currency for {symbol}: {e}")
+        logger.warning(
+            f"{symbol}: could not verify financial-statement currency ({e}) — "
+            f"omitting quarterly figures rather than risk showing them in the "
+            f"wrong currency under an INR/Cr label."
+        )
+        return []
+
+    financial_currency = info.get("financialCurrency")
+    trading_currency = info.get("currency")
+    if financial_currency and trading_currency and financial_currency != trading_currency:
+        live_rate = _get_live_fx_rate(financial_currency, trading_currency)
+        if live_rate is not None:
+            fx_rate = live_rate
+            logger.info(
+                f"{symbol}: converting quarterly financials from "
+                f"{financial_currency} to {trading_currency} at live rate {fx_rate:.4f}"
+            )
+        else:
+            logger.warning(
+                f"{symbol}: financials are reported in {financial_currency} but the "
+                f"stock trades in {trading_currency}, and no live FX rate could be "
+                f"fetched — omitting quarterly figures rather than mislabeling them."
+            )
+            return []
 
     results = []
     # yfinance columns are Timestamps representing quarter end dates

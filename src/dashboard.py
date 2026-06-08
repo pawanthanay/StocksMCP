@@ -69,8 +69,8 @@ def build_dashboard_data(report: dict) -> dict:
         "key_metrics": {
             "date": report.get("fetched_at", "")[:10],
             "cmp": fundamentals.get("current_price", 0),
-            "fair_price": fair_price_data.get("fair_price", 0),
-            "gap_percentage": fair_price_data.get("gap_percentage", 0),
+            "fair_price": fair_price_data.get("fair_price"),
+            "gap_percentage": fair_price_data.get("gap_percentage"),
             "market_cap": fundamentals.get("market_cap", 0),
             "pe_ratio": fundamentals.get("pe_ratio", 0),
             "pb_ratio": fundamentals.get("pb_ratio", 0),
@@ -90,11 +90,11 @@ def build_dashboard_data(report: dict) -> dict:
         "candlestick_data": historical,
         "ai_summary": report.get("ai_summary", ""),
         "fair_price": {
-            "fair_price": fair_price_data.get("fair_price", 0),
+            "fair_price": fair_price_data.get("fair_price"),
             "current_price": fair_price_data.get("current_price", 0),
-            "gap_percentage": fair_price_data.get("gap_percentage", 0),
-            "is_undervalued": fair_price_data.get("is_undervalued", False),
-            "valuation_method": fair_price_data.get("valuation_method", "PE-based"),
+            "gap_percentage": fair_price_data.get("gap_percentage"),
+            "is_undervalued": fair_price_data.get("is_undervalued"),
+            "valuation_method": fair_price_data.get("valuation_method", "N/A"),
         },
         "recommendation": report.get("recommendation", "Neutral"),
     }
@@ -216,7 +216,13 @@ def build_prefab_dashboard(report: dict) -> Any:
     fair = data["fair_price"]
     candles = data["candlestick_data"]
 
-    gap_status = "Undervalued" if fair["is_undervalued"] else "Overvalued"
+    # is_undervalued is None when the valuation model genuinely doesn't apply
+    # (e.g. loss-making companies with no usable PE/profit data) -- show that
+    # honestly rather than defaulting to a misleading "Overvalued" label.
+    if fair["is_undervalued"] is None:
+        gap_status = "N/A"
+    else:
+        gap_status = "Undervalued" if fair["is_undervalued"] else "Overvalued"
 
     with PrefabApp(title=f"\U0001F4CA {header['company_name']} — Stock Analysis") as app:
 
@@ -265,8 +271,8 @@ def build_prefab_dashboard(report: dict) -> Any:
                         Grid(css_class="grid-cols-2 gap-2", children=[
                             _metric_block("Date", metrics["date"] or "N/A"),
                             _metric_block("CMP", f"₹{metrics['cmp']:,.2f}"),
-                            _metric_block("Fair Price", f"₹{metrics['fair_price']:,.2f}"),
-                            _metric_block("Gap %", f"{metrics['gap_percentage']:+.2f}% ({gap_status})"),
+                            _metric_block("Fair Price", f"₹{metrics['fair_price']:,.2f}" if metrics["fair_price"] is not None else "N/A"),
+                            _metric_block("Gap %", f"{metrics['gap_percentage']:+.2f}% ({gap_status})" if metrics["gap_percentage"] is not None else "N/A"),
                             _metric_block("Market Cap", _format_market_cap(metrics["market_cap"])),
                             _metric_block("PE Ratio", f"{metrics['pe_ratio']:.2f}" if metrics["pe_ratio"] else "N/A"),
                         ])
@@ -357,17 +363,27 @@ def build_prefab_dashboard(report: dict) -> Any:
                     with CardHeader():
                         CardTitle("\U0001F4B0 Fair Price Estimation")
                     with CardContent():
-                        Grid(css_class="grid-cols-2 gap-3", children=[
-                            Metric(label="Fair Price", value=f"₹{fair['fair_price']:,.2f}"),
-                            Metric(label="Current Price (CMP)", value=f"₹{fair['current_price']:,.2f}"),
-                            Metric(
-                                label="Undervalued %" if fair["is_undervalued"] else "Overvalued %",
-                                value=f"{abs(fair['gap_percentage']):.2f}%",
-                                trend="up" if fair["is_undervalued"] else "down",
-                                trendSentiment="positive" if fair["is_undervalued"] else "negative",
-                            ),
-                            Metric(label="Valuation Status", value=gap_status),
-                        ])
+                        if fair["fair_price"] is None or fair["gap_percentage"] is None or fair["is_undervalued"] is None:
+                            # No usable earnings data to model fair value from
+                            # (e.g. loss-making companies) -- show that honestly
+                            # rather than rendering a fabricated estimate.
+                            Grid(css_class="grid-cols-2 gap-3", children=[
+                                Metric(label="Fair Price", value="N/A"),
+                                Metric(label="Current Price (CMP)", value=f"₹{fair['current_price']:,.2f}"),
+                                Metric(label="Valuation Status", value="N/A"),
+                            ])
+                        else:
+                            Grid(css_class="grid-cols-2 gap-3", children=[
+                                Metric(label="Fair Price", value=f"₹{fair['fair_price']:,.2f}"),
+                                Metric(label="Current Price (CMP)", value=f"₹{fair['current_price']:,.2f}"),
+                                Metric(
+                                    label="Undervalued %" if fair["is_undervalued"] else "Overvalued %",
+                                    value=f"{abs(fair['gap_percentage']):.2f}%",
+                                    trend="up" if fair["is_undervalued"] else "down",
+                                    trendSentiment="positive" if fair["is_undervalued"] else "negative",
+                                ),
+                                Metric(label="Valuation Status", value=gap_status),
+                            ])
                         Separator()
                         Muted(f"Method: {fair['valuation_method']}")
                         Muted("Formula: Gap % = ((Fair Price − CMP) / Fair Price) × 100")
