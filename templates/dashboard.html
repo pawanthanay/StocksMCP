@@ -278,11 +278,12 @@
         /* Data freshness indicator — shows exactly when the figures were fetched */
         .data-freshness {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             gap: 6px;
             font-size: 0.75rem;
             color: var(--text-muted);
             padding: 0 2px 6px;
+            line-height: 1.4;
         }
         .data-freshness .freshness-dot {
             display: inline-block;
@@ -290,6 +291,7 @@
             height: 6px;
             border-radius: 50%;
             flex-shrink: 0;
+            margin-top: 4px;
         }
         .data-freshness.is-live .freshness-dot {
             background-color: var(--growth-color);
@@ -874,6 +876,69 @@
             }
         }
 
+        /* Quarterly table → stacked cards on phones/small tablets.
+           A 12-column table only shows ~3 columns at a time when scrolled
+           horizontally on a phone, hiding PAT, NPM%, Recommendation, etc.
+           Each quarter becomes a label/value card instead — everything
+           visible at a glance, no horizontal scrolling required. */
+        @media (max-width: 700px) {
+            .table-container {
+                overflow-x: visible;
+                border: none;
+                background: none;
+                border-radius: 0;
+            }
+            #quarterly-table thead {
+                display: none;
+            }
+            #quarterly-table, #quarterly-table tbody, #quarterly-table tr, #quarterly-table td {
+                display: block;
+                width: 100%;
+            }
+            #quarterly-table tbody tr {
+                margin-bottom: 12px;
+                background-color: var(--card-color);
+                border: 1px solid var(--border-color);
+                border-radius: 8px;
+                overflow: hidden;
+            }
+            #quarterly-table tbody tr:last-child {
+                margin-bottom: 0;
+            }
+            #quarterly-table td {
+                padding: 11px 14px;
+                border-bottom: 1px solid rgba(38, 51, 80, 0.5);
+                text-align: right;
+            }
+            #quarterly-table tbody tr td:last-child {
+                border-bottom: none;
+            }
+            #quarterly-table td[data-label] {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+            }
+            #quarterly-table td[data-label]::before {
+                content: attr(data-label);
+                font-size: 0.7rem;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                color: var(--text-secondary);
+                text-align: left;
+                flex-shrink: 0;
+            }
+            #quarterly-table td:first-child:not([colspan]) {
+                background-color: rgba(59, 130, 246, 0.08);
+                font-size: 1rem;
+                text-align: left;
+            }
+            #quarterly-table td:first-child:not([colspan])::before {
+                content: '';
+            }
+        }
+
         /* Very small phones */
         @media (max-width: 400px) {
             .metrics-grid {
@@ -1363,18 +1428,19 @@
             } else {
                 // Quarterly array is sorted newest-first, so index i+1 is the prior (older) quarter —
                 // used as the QoQ baseline for red/green trend coloring of each performance cell.
-                const trendCell = (curr, prev, formatter) => {
+                const trendCell = (curr, prev, formatter, label) => {
                     const text = formatter(curr);
+                    const dl = ` data-label="${label}"`;
                     if (curr === null || curr === undefined || prev === null || prev === undefined || isNaN(curr) || isNaN(prev)) {
-                        return `<td class="text-right">${text}</td>`;
+                        return `<td class="text-right"${dl}>${text}</td>`;
                     }
                     if (curr > prev) {
-                        return `<td class="text-right cell-up"><span class="trend-arrow">▲</span>${text}</td>`;
+                        return `<td class="text-right cell-up"${dl}><span class="trend-arrow">▲</span>${text}</td>`;
                     }
                     if (curr < prev) {
-                        return `<td class="text-right cell-down"><span class="trend-arrow">▼</span>${text}</td>`;
+                        return `<td class="text-right cell-down"${dl}><span class="trend-arrow">▼</span>${text}</td>`;
                     }
-                    return `<td class="text-right">${text}</td>`;
+                    return `<td class="text-right"${dl}>${text}</td>`;
                 };
 
                 quarterly.forEach((q, idx) => {
@@ -1391,18 +1457,18 @@
 
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
-                        <td><strong>${q.quarter}</strong></td>
-                        ${trendCell(q.net_sales, prevQ?.net_sales, formatCrores)}
-                        ${trendCell(q.ttm_gp, prevQ?.ttm_gp, formatCrores)}
-                        ${trendCell(q.gpm, prevQ?.gpm, formatPercent)}
-                        <td class="text-right">${formatCrores(q.interest)}</td>
-                        ${trendCell(q.ebitda, prevQ?.ebitda, formatCrores)}
-                        <td class="text-right">${formatCrores(q.tax)}</td>
-                        ${trendCell(q.pat, prevQ?.pat, formatCrores)}
-                        ${trendCell(q.npm, prevQ?.npm, formatPercent)}
-                        <td class="text-right">${formatCrores(q.market_cap)}</td>
-                        <td class="text-right">${q.ttm_pe ? q.ttm_pe.toFixed(2) + 'x' : 'N/A'}</td>
-                        <td style="text-align: center;">${recBadge}</td>
+                        <td data-label="Quarter"><strong>${q.quarter}</strong></td>
+                        ${trendCell(q.net_sales, prevQ?.net_sales, formatCrores, 'Net Sales')}
+                        ${trendCell(q.ttm_gp, prevQ?.ttm_gp, formatCrores, 'TTM GP')}
+                        ${trendCell(q.gpm, prevQ?.gpm, formatPercent, 'GPM%')}
+                        <td class="text-right" data-label="Interest">${formatCrores(q.interest)}</td>
+                        ${trendCell(q.ebitda, prevQ?.ebitda, formatCrores, 'EBITDA')}
+                        <td class="text-right" data-label="Tax">${formatCrores(q.tax)}</td>
+                        ${trendCell(q.pat, prevQ?.pat, formatCrores, 'PAT')}
+                        ${trendCell(q.npm, prevQ?.npm, formatPercent, 'NPM%')}
+                        <td class="text-right" data-label="Market Cap">${formatCrores(q.market_cap)}</td>
+                        <td class="text-right" data-label="TTM PE">${q.ttm_pe ? q.ttm_pe.toFixed(2) + 'x' : 'N/A'}</td>
+                        <td style="text-align: center;" data-label="Recommendation">${recBadge}</td>
                     `;
                     tableBody.appendChild(tr);
                 });

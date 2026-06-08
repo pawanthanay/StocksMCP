@@ -7,6 +7,7 @@ than being estimated or fabricated.
 """
 
 import logging
+import math
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -256,6 +257,15 @@ def fetch_historical_prices(symbol: str, period: str = "1y") -> List[Dict[str, A
 
     prices = []
     for index, row in hist.iterrows():
+        # Yahoo sometimes returns a still-forming row for the current trading
+        # day with real volume but NaN OHLC (price data not yet synced) — a
+        # candle with no open/high/low/close can't be plotted or trusted, and
+        # NaN floats crash JSON serialization downstream ("Out of range float
+        # values are not JSON compliant: nan"). Skip these incomplete rows
+        # rather than emit garbage data for that day.
+        if any(math.isnan(row[col]) for col in ("Open", "High", "Low", "Close")):
+            continue
+
         # index is Timestamp
         date_str = index.strftime("%Y-%m-%d")
         prices.append({
